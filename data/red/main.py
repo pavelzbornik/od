@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 import csv
+import functools
 import gzip
 import json
 import logging
+import multiprocessing
 import os
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -32,9 +34,74 @@ ID_COLS = ("iriDotace", "iriPrijemce", "iriRozhodnuti", "iriRozpoctoveObdobi")
 
 
 def remote_csv(url):
-    with urlopen(url, timeout=30) as r, gzip.open(r, encoding="utf-8", mode="rt") as f:
+    """
+    Je tu takova vtipna situace, ze Financni sprava neni schopna obhospodarit
+    vic jak dva soubory najednou, takze dalsi budou cekat ve fronte, proto ten timeout.
+    """
+    with urlopen(url, timeout=600) as r, gzip.open(r, encoding="utf-8", mode="rt") as f:
         cr = csv.DictReader((line.replace("\0", "") for line in f), strict=True)
         yield from cr
+
+
+def process_ds(outdir, partial, fn_url_mapping, csl, ds):
+    logging.info("Nacitam %s", ds)
+    tfn = os.path.join(outdir, f"{ds}.csv")
+    with open(tfn, encoding="utf-8", mode="wt") as fw:
+        for num, ln in enumerate(remote_csv(fn_url_mapping[f"{ds}.csv.gz"])):
+            if num == 0:
+                clean_header = [
+                    ("id" + j[3:] if j in ID_COLS else j)
+                    for j in ln.keys()
+                    if j is not None
+                ]
+                # TODO: trochu duplicity, dole delam to stejny
+                clean_header = [
+                    (j[3].lower() + j[4:] if j.startswith("iri") else j)
+                    for j in clean_header
+                ]
+                cw = csv.DictWriter(fw, fieldnames=clean_header, lineterminator="\n")
+                cw.writeheader()
+            if partial and num > 5e3:
+                break
+
+            if None in ln:
+                raise ValueError(f"extra sloupce v souboru {ds}")
+
+            # vypln info z ciselniku
+            for k, v in ln.items():
+                # ID sebe samo nepotrebujem nahrazovat
+                # taky nenahrazujem cizi klic
+                # jen odsekneme vetsinu URL
+                if k in ID_COLS:
+                    ln[k] = v.rpartition("/")[-1]
+                    continue
+
+                if v.startswith("http://") or v.startswith("https://"):
+                    # tohle proste spadne, kdyz bude chybet klasifikator
+                    if v not in csl:
+                        raise KeyError("chybi", k, v)
+                        continue
+
+                    ln[k] = csl[v]
+
+            # iri -> id
+            # u identifikatoru zmen z iriFoo na idFoo
+            # u ciselniku zmen z iriFooBar na fooBar
+            for key in list(ln.keys()):
+                if not key.startswith("iri"):
+                    continue
+                val = ln[key]
+                new_key = key[3:]  # strip 'iri'
+                if key in ID_COLS:
+                    ln["id" + new_key] = val
+                else:
+                    ln[new_key[0].lower() + new_key[1:]] = val
+
+                del ln[key]
+
+            cw.writerow(ln)
+
+    return ds
 
 
 def main(outdir: str, partial: bool = False):
@@ -69,65 +136,11 @@ def main(outdir: str, partial: bool = False):
         for ln in remote_csv(fn_url_mapping[cs["filename"]]):
             csl[ln[cs["id"]]] = ln[cs["nazev"]]
 
-    for ds in DATASETS:
-        logging.info("Nacitam %s", ds)
-        tfn = os.path.join(outdir, f"{ds}.csv")
-        with open(tfn, encoding="utf-8", mode="wt") as fw:
-            for num, ln in enumerate(remote_csv(fn_url_mapping[f"{ds}.csv.gz"])):
-                if num == 0:
-                    clean_header = [
-                        ("id" + j[3:] if j in ID_COLS else j)
-                        for j in ln.keys()
-                        if j is not None
-                    ]
-                    # TODO: trochu duplicity, dole delam to stejny
-                    clean_header = [
-                        (j[3].lower() + j[4:] if j.startswith("iri") else j)
-                        for j in clean_header
-                    ]
-                    cw = csv.DictWriter(
-                        fw, fieldnames=clean_header, lineterminator="\n"
-                    )
-                    cw.writeheader()
-                if partial and num > 5e3:
-                    break
-
-                if None in ln:
-                    raise ValueError(f"extra sloupce v souboru {ds}")
-
-                # vypln info z ciselniku
-                for k, v in ln.items():
-                    # ID sebe samo nepotrebujem nahrazovat
-                    # taky nenahrazujem cizi klic
-                    # jen odsekneme vetsinu URL
-                    if k in ID_COLS:
-                        ln[k] = v.rpartition("/")[-1]
-                        continue
-
-                    if v.startswith("http://") or v.startswith("https://"):
-                        # tohle proste spadne, kdyz bude chybet klasifikator
-                        if v not in csl:
-                            raise KeyError("chybi", k, v)
-                            continue
-
-                        ln[k] = csl[v]
-
-                # iri -> id
-                # u identifikatoru zmen z iriFoo na idFoo
-                # u ciselniku zmen z iriFooBar na fooBar
-                for key in list(ln.keys()):
-                    if not key.startswith("iri"):
-                        continue
-                    val = ln[key]
-                    new_key = key[3:]  # strip 'iri'
-                    if key in ID_COLS:
-                        ln["id" + new_key] = val
-                    else:
-                        ln[new_key[0].lower() + new_key[1:]] = val
-
-                    del ln[key]
-
-                cw.writerow(ln)
+    ncpu = multiprocessing.cpu_count()
+    job = functools.partial(process_ds, outdir, partial, fn_url_mapping, csl)
+    with multiprocessing.Pool(ncpu) as pool:
+        for done in pool.imap_unordered(job, DATASETS):
+            print("hotovo", done)  # TODO: logging.debug
 
 
 if __name__ == "__main__":
