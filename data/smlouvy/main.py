@@ -1,4 +1,6 @@
 import csv
+import functools
+import multiprocessing
 import os
 from datetime import date
 from urllib.parse import urlparse
@@ -84,7 +86,7 @@ def process_raw_file(url, outdir, partial):
 
         et = lxml.etree.iterparse(data)
 
-        for num, (_, el) in enumerate(tqdm(et, desc=filename)):
+        for num, (_, el) in enumerate(et):
             if partial and num > 1e5:
                 break
             eln = strip_ns(el)
@@ -155,6 +157,8 @@ def process_raw_file(url, outdir, partial):
 
                 cwu.writerow(row)
 
+    return url
+
 
 hds = [
     "dump",
@@ -188,8 +192,14 @@ nin = hdu.index("ico")  # kde mame ciselne ICO?
 
 
 def main(outdir: str, partial: bool = False):
-    for url in get_raw_links(partial):
-        process_raw_file(url, outdir, partial)
+    ncpu = multiprocessing.cpu_count()
+    processor = functools.partial(process_raw_file, outdir=outdir, partial=partial)
+    links = list(get_raw_links(partial))
+    progress = tqdm(total=len(links))
+
+    with multiprocessing.Pool(ncpu) as pool:
+        for _ in pool.imap_unordered(processor, links):
+            progress.update(n=1)
 
 
 if __name__ == "__main__":
