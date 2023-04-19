@@ -1,0 +1,3 @@
+# Informační systém výzkumu, experimentálního vývoje a inovací
+
+Informační systém výzkumu, experimentálního vývoje a inovací, provozovaný podle § 30 zákona č. 130/2002 Sb., o podpoře výzkumu, experimentálního vývoje a inovací, ve znění zákona č. 110/2009 Sb. pozdějších předpisů. Zveřejněním veřejně přístupných údajů plní Rada pro výzkum, vývoj a inovace jako provozovatel povinnost podle §10 nařízení vlády 397/2009 Sb. ze dne 19. října 2009 o informačním systému výzkumu, experimentálního vývoje a inovací od 1. 1. 2010. Údaje jsou v online podobě veřejně dostupné na adrese [isvavai.cz/open-data](https://www.isvavai.cz/open-data) a to včetně možnosti exportu do strojově čitelných formátů.
